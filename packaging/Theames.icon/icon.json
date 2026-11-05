@@ -1,0 +1,47 @@
+{
+  "fill": {
+    "solid": "srgb:0.05098,0.06275,0.12549,1.00000"
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "big.png",
+          "name": "big",
+          "glass": true
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "specular": true
+    },
+    {
+      "layers": [
+        {
+          "image-name": "small.png",
+          "name": "small",
+          "glass": true
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "specular": true
+    },
+    {
+      "layers": [
+        {
+          "image-name": "glow.png",
+          "name": "glow"
+        }
+      ],
+      "specular": false
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}
