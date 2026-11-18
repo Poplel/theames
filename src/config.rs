@@ -28,6 +28,16 @@ pub struct Config {
     pub welcomed: bool,
     /// Windows: Theames tried pinning its shortcut to the taskbar once (never again, so an unpin sticks).
     pub pin_attempted: bool,
+    /// Install new versions of Theames itself automatically (the Settings toggle).
+    #[serde(default = "yes")]
+    pub auto_update: bool,
+    /// Theme files whose own "Update automatically" toggle is off. Every other theme updates
+    /// itself from the marketplace.
+    pub theme_updates_off: Vec<String>,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -79,6 +89,8 @@ impl Default for Config {
             login_item_path: None,
             welcomed: false,
             pin_attempted: false,
+            auto_update: true,
+            theme_updates_off: Vec::new(),
         }
     }
 }

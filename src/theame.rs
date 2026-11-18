@@ -33,6 +33,10 @@ pub struct Manifest {
     /// Theames panel, so the theme itself never has to be modified.
     #[serde(default)]
     pub variables: Vec<VariableDecl>,
+    /// Themes this one takes over from (their manifest names or file names). When Theames updates
+    /// itself it installs this theme in their place and moves the user's choices across.
+    #[serde(default)]
+    pub replaces: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,7 +112,11 @@ impl Theame {
             .unwrap_or("")
             .to_string();
         let data = std::fs::read(path)?;
+        Theame::from_bytes(file, data)
+    }
 
+    /// A `.theame` that isn't (yet) on disk, e.g. just downloaded.
+    pub fn from_bytes(file: String, data: Vec<u8>) -> Result<Theame> {
         let mut zip = ZipArchive::new(Cursor::new(&data))
             .map_err(|e| anyhow!("{file}: not a valid .theame archive ({e})"))?;
         let mut manifest_text = String::new();

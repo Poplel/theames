@@ -189,8 +189,11 @@ pub async fn ensure_running(config: &Config) -> Result<String> {
     if port_is_up(port) {
         println!("[theames] Teams already on debug port {port}, attaching.");
         // Windows: Theames is what the taskbar button starts, so show Teams (it may be in the tray).
+        // Not when Theames restarted itself after an update: nobody asked for Teams then.
         #[cfg(target_os = "windows")]
-        show_teams(config);
+        if !crate::update::restarted() {
+            show_teams(config);
+        }
         return browser_ws_url(port);
     }
 
@@ -235,5 +238,7 @@ pub fn config_clone(config: &Config) -> Config {
         login_item_path: None,
         welcomed: false,
         pin_attempted: false,
+        auto_update: false,
+        theme_updates_off: Vec::new(),
     }
 }

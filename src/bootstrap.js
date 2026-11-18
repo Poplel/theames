@@ -335,6 +335,12 @@
           [ir, el('span', { text: 'icon · ' + t.name })]));
       }
       if ((t.variables || []).length) rows.push(variableRows(t));
+      // this theme's own auto-update toggle
+      var au = el('input', { type: 'checkbox', 'data-tid': 'theames-theme-auto', 'data-file': t.file, style: 'margin:0;cursor:pointer' });
+      au.checked = t.autoUpdate !== false;
+      au.addEventListener('change', function () { req('setThemeAutoUpdate', { file: t.file, on: au.checked }); });
+      rows.push(el('label', { style: 'display:flex;gap:8px;align-items:center;padding:6px 0 0;margin-top:6px;border-top:1px solid #333;cursor:pointer;font-size:12px;opacity:.8' },
+        [au, el('span', { text: 'Update automatically' })]));
       sections.push(el('div', { style: 'margin:10px 0;padding:8px;border:1px solid #3a3a3a;border-radius:8px' },
         [el('div', { text: t.name + '  ' + (t.version || ''), style: 'font-weight:600;margin-bottom:4px' })].concat(rows)));
     });
@@ -402,6 +408,39 @@
       }
     });
 
+    // Settings: automatic updates (Theames + themes), with a "Check now".
+    var upd = el('div', { style: 'margin:10px 0;padding:8px;border:1px solid #3a3a3a;border-radius:8px' });
+    var wasChecking = false, pollTimer = null;
+    function renderUpdates(u) {
+      while (upd.firstChild) upd.removeChild(upd.firstChild);
+      var cb = el('input', { type: 'checkbox', 'data-tid': 'theames-auto-update', style: 'width:16px;height:16px;margin:0;cursor:pointer' });
+      cb.checked = !!u.auto;
+      cb.addEventListener('change', function () { req('setAutoUpdate', { on: cb.checked }).then(renderUpdates).then(poll); });
+      var when = u.lastCheck && !u.checking ? ' \u00b7 checked ' + new Date(u.lastCheck * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+      var check = el('button', { text: u.checking ? 'Checking\u2026' : 'Check now', 'data-tid': 'theames-check-updates', style: btnStyle('#444') + ';padding:4px 10px;flex:none',
+        onclick: function () { req('checkUpdates').then(renderUpdates).then(poll); } });
+      if (u.checking) check.disabled = true;
+      upd.appendChild(el('div', { text: 'Settings', style: 'font-weight:600;margin-bottom:4px' }));
+      upd.appendChild(el('label', { style: 'display:flex;gap:8px;align-items:center;padding:2px 0;cursor:pointer' },
+        [cb, el('span', { text: 'Update Theames automatically' })]));
+      upd.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;margin-top:6px' }, [
+        el('span', { 'data-tid': 'theames-update-status', text: 'Theames ' + u.version + (u.message ? ' \u00b7 ' + u.message : '') + when,
+          style: 'flex:1;font-size:12px;' + (u.error ? 'color:#ff9a9a' : 'opacity:.75') }), check]));
+      // a check that just installed themes: show the new versions
+      if (wasChecking && !u.checking && /^Updated/.test(u.message || '')) setTimeout(openPanel, 600);
+      wasChecking = !!u.checking;
+      return u;
+    }
+    function poll(u) {
+      if (!u || !u.checking || pollTimer) return;
+      pollTimer = setTimeout(function () {
+        pollTimer = null;
+        if (!document.getElementById(PANEL_ID)) return;
+        req('getUpdates').then(renderUpdates).then(poll).catch(function () {});
+      }, 1000);
+    }
+    req('getUpdates').then(renderUpdates).then(poll).catch(function () { upd.style.display = 'none'; });
+
     var card = el('div', {
       style: 'width:380px;max-width:92vw;max-height:82vh;overflow:auto;' +
         'background:#1f1f1f;color:#fff;border:1px solid #3a3a3a;border-radius:14px;padding:18px;' +
@@ -410,6 +449,7 @@
       el('div', { text: 'Theames', style: 'font-size:17px;font-weight:700;margin-bottom:10px' })
     ].concat(sections).concat([
       el('div', { style: 'display:flex;gap:8px;margin-top:12px;flex-wrap:wrap' }, [apply, openFolder, close]),
+      upd,
       el('div', { style: 'margin-top:14px;padding-top:10px;border-top:1px solid #3a3a3a' }, [uninstall])
     ]));
 

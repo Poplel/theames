@@ -16,6 +16,10 @@ use crate::theame::{self, Theame};
 pub struct Shared {
     pub config: Mutex<Config>,
     pub themes_dir: PathBuf,
+    /// What the last update check found (shown in the panel).
+    pub update: Mutex<crate::update::Status>,
+    /// Signalled when theme files changed under the pages (an update): re-apply everywhere.
+    pub reapply: tokio::sync::Notify,
 }
 
 impl Shared {
@@ -105,6 +109,42 @@ pub async fn handle(shared: &Arc<Shared>, action: &str, payload: Value) -> Resul
             cfg.save()?;
             Ok((json!({ "ok": true }), Reinject::Apply))
         }
+        // Settings: the updates toggle + status.
+        "getUpdates" => Ok((crate::update::status_json(shared).await, Reinject::None)),
+        "setAutoUpdate" => {
+            let on = payload["on"].as_bool().ok_or_else(|| anyhow!("setAutoUpdate: missing on"))?;
+            {
+                let mut cfg = shared.config.lock().await;
+                cfg.auto_update = on;
+                cfg.save()?;
+            }
+            if on {
+                tokio::spawn(crate::update::check(shared.clone(), false));
+            }
+            Ok((crate::update::status_json(shared).await, Reinject::None))
+        }
+        // payload: { file, on } - one theme's own "Update automatically" toggle
+        "setThemeAutoUpdate" => {
+            let file = payload["file"].as_str().ok_or_else(|| anyhow!("setThemeAutoUpdate: missing file"))?.to_string();
+            let on = payload["on"].as_bool().ok_or_else(|| anyhow!("setThemeAutoUpdate: missing on"))?;
+            {
+                let mut cfg = shared.config.lock().await;
+                cfg.theme_updates_off.retain(|f| !f.eq_ignore_ascii_case(&file));
+                if !on {
+                    cfg.theme_updates_off.push(file);
+                }
+                cfg.save()?;
+            }
+            if on {
+                tokio::spawn(crate::update::check(shared.clone(), false));
+            }
+            Ok((json!({ "ok": true }), Reinject::None))
+        }
+        "checkUpdates" => {
+            tokio::spawn(crate::update::check(shared.clone(), true));
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            Ok((crate::update::status_json(shared).await, Reinject::None))
+        }
         "openFolder" => {
             open_folder(&shared.themes_dir);
             Ok((json!({ "ok": true }), Reinject::None))
@@ -147,6 +187,7 @@ async fn list(shared: &Arc<Shared>) -> Value {
                     "backgrounds": t.manifest.backgrounds.iter().map(|b| &b.name).collect::<Vec<_>>(),
                     "chats": t.manifest.chats.iter().map(|c| &c.name).collect::<Vec<_>>(),
                     "hasIcon": t.manifest.icon.is_some(),
+                    "autoUpdate": !cfg.theme_updates_off.iter().any(|f| f.eq_ignore_ascii_case(&file)),
                     "variables": variables,
                 }));
             }

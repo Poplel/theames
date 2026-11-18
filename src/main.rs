@@ -17,6 +17,7 @@ mod inject;
 mod instance;
 mod teams;
 mod theame;
+mod update;
 #[cfg(windows)]
 mod winshell;
 #[cfg(windows)]
@@ -76,6 +77,7 @@ fn main() -> Result<()> {
     }
     redirect_output_to_log();
     println!("[theames] --- start v{} ---", env!("CARGO_PKG_VERSION"));
+    update::startup();
     #[cfg(any(target_os = "macos", windows))]
     if std::env::args().any(|a| a == "--uninstall") {
         return uninstall::run();
@@ -227,8 +229,11 @@ async fn run() -> Result<()> {
     let shared = Arc::new(Shared {
         config: Mutex::new(config),
         themes_dir,
+        update: Mutex::new(update::Status::default()),
+        reapply: tokio::sync::Notify::new(),
     });
     let _ = SHARED.set(shared.clone());
+    tokio::spawn(update::run(shared.clone()));
 
     // Before Teams starts, so its Dock icon comes up themed.
     #[cfg(target_os = "macos")]
@@ -301,6 +306,17 @@ async fn serve(shared: &Arc<Shared>, browser_ws: &str) -> Result<()> {
         .await?;
 
     tokio::spawn(sweep_pages(client.clone(), sessions.clone(), pages.clone()));
+    // Updated theme files: re-apply them on every page of this session.
+    let reapplier = tokio::spawn({
+        let (c, s, sh) = (client.clone(), sessions.clone(), shared.clone());
+        async move {
+            loop {
+                sh.reapply.notified().await;
+                reinject_all(&c, &s).await;
+            }
+        }
+    });
+    let _stop_reapplier = AbortOnDrop(reapplier);
 
     while let Some(event) = events.recv().await {
         if std::env::var_os("THEAMES_DEBUG_TARGETS").is_some() {
@@ -376,6 +392,13 @@ async fn serve(shared: &Arc<Shared>, browser_ws: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// Safety net for pages the event stream doesn't announce usably: while Teams starts up it
