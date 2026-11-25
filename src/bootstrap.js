@@ -68,9 +68,12 @@
   // observers, timers — and undo exactly that when it's disabled. No reloads.
   var activeMods = {}; // ref -> { nodes, observers, intervals, timeouts, ourObs }
 
+  // Unchanged CSS is left alone: rewriting a <style> makes Teams restyle its whole page (thousands of
+  // nodes), and the theme is re-applied on every page each time anything in the panel changes.
   function setStyle(id, css) {
     var s = document.getElementById(id);
     if (!css) { if (s) s.remove(); return; }
+    if (s && s.textContent === css) return;
     if (!s) { s = document.createElement('style'); s.id = id; }
     s.textContent = css;
     (document.head || document.documentElement).appendChild(s);
@@ -132,34 +135,56 @@
     'rgb(31, 31, 31)': 1, 'rgb(20, 20, 20)': 1, 'rgb(26, 26, 26)': 1, 'rgba(26, 26, 26, 0.5)': 1,
     'rgb(41, 41, 41)': 1, 'rgb(24, 24, 24)': 1, 'rgb(36, 36, 36)': 1, 'rgb(15, 15, 15)': 1, 'rgb(25, 25, 25)': 1
   };
+  // Never cleared: Theames' own UI (ids "theames-…", e.g. mod panels, which often borrow Teams' colours) and
+  // Teams' pop-up surfaces (menus, popovers, dialogs, dropdown lists, tooltips) - they float over content, so
+  // cleared they are unreadable. A theme can still restyle them (Aurora makes them frosted glass).
+  // Pop-ups: only the surface itself keeps its colour (the grey inside - menu items etc. - is cleared as
+  // usual, so a theme that frosts the surface gets clean glass, and one that doesn't still looks like Teams).
+  var KEEP = '[data-tid="chat-pane-message"],[data-tid="ckeditor"],[id^="theames-"]';
+  // (Fluent v9 .fui-* and the older v0 .ui-*; v0 pop-ups paint on .ui-popup__content__content.)
+  var KEEP_SELF = '.fui-MenuPopover,.fui-PopoverSurface,.fui-DialogSurface,.fui-Listbox,.fui-Tooltip__content,' +
+    '.ui-popup__content__content,.ui-dialog,.ui-tooltip__content,.ui-dropdown__items-list';
   var TRANSPARENCY_CSS =
     '[data-tid="slot-measurer"],[data-tid^="app-layout-area--"]{background:transparent!important;background-color:transparent!important}' +
     '[' + CLEAR_ATTR + ']{background:transparent!important;background-color:transparent!important}';
 
   function setTransparency(on) {
     var st = window.__theamesTransp;
-    if (st) { try { st.obs.disconnect(); } catch (e) {} window.__theamesTransp = null; }
+    // Already on: keep the running sweep. Re-sweeping the whole page on every apply (each slider tick in the
+    // panel) read the computed style of every element in Teams.
+    if (on && st && document.getElementById('theames-transparency')) return;
+    if (st) {
+      try { st.obs.disconnect(); } catch (e) {}
+      document.removeEventListener('transitionend', st.onEnd, true);
+      window.__theamesTransp = null;
+    }
     var style = document.getElementById('theames-transparency');
     if (!on) {
       if (style) style.remove();
+      document.documentElement.removeAttribute('data-theames-transparent');
       [].forEach.call(document.querySelectorAll('[' + CLEAR_ATTR + ']'), function (n) { n.removeAttribute(CLEAR_ATTR); });
       return;
     }
     if (!style) { style = document.createElement('style'); style.id = 'theames-transparency'; }
     style.textContent = TRANSPARENCY_CSS;
     (document.head || document.documentElement).appendChild(style);
+    // For theme CSS / mods that want to style differently over a see-through background.
+    document.documentElement.setAttribute('data-theames-transparent', '');
 
     function tag(el) {
-      if (el.nodeType !== 1 || el.closest('[data-tid="chat-pane-message"],[data-tid="ckeditor"]')) return;
+      if (el.hasAttribute(CLEAR_ATTR) || el.matches(KEEP_SELF)) return;
       if (SURFACES[getComputedStyle(el).backgroundColor]) el.setAttribute(CLEAR_ATTR, '');
     }
+    // Walks the subtree but skips KEEP subtrees entirely (one closest() for the root, then pruning).
     function sweep(root) {
-      if (root.nodeType !== 1) return;
-      tag(root);
-      var all = root.querySelectorAll('*');
-      for (var i = 0; i < all.length; i++) tag(all[i]);
+      if (root.nodeType !== 1 || root.closest(KEEP)) return;
+      var walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+        acceptNode: function (n) { return n.matches(KEEP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; }
+      });
+      for (var n = root; n; n = walker.nextNode()) tag(n);
     }
-    var layout = document.querySelector('[data-tid="experience-layout"]') || document.body;
+    // The whole body, not just the app layout: pop-ups render in portals next to it.
+    var layout = document.body;
     sweep(layout);
     var queued = [], raf = false;
     var obs = new MutationObserver(function (muts) {
@@ -175,7 +200,14 @@
       });
     });
     obs.observe(layout, { childList: true, subtree: true });
-    window.__theamesTransp = { obs: obs };
+    // Many Teams surfaces fade their background in (transition: all), so a fresh node can be swept before it
+    // has reached its surface colour: check again when its background transition ends.
+    var onEnd = function (e) {
+      if (!/^background/.test(e.propertyName) || !e.target.closest || e.target.closest(KEEP)) return;
+      tag(e.target);
+    };
+    document.addEventListener('transitionend', onEnd, true);
+    window.__theamesTransp = { obs: obs, onEnd: onEnd };
   }
 
   function applyTheme(theme) {
